@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="CompGraphicsProject/CompGraphicsProject.vcxproj" Id="a6a33397-b0ea-4d35-8f3b-e828a274ed83" />
+</Solution>
