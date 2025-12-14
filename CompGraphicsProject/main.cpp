@@ -22,6 +22,11 @@
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
+// ============================ SHIELD CONSTANTS ============================
+const float SHIELD_RADIUS_FACTOR = 0.18f; // Radius of the shield in normalized coordinates
+const float SHIELD_DURATION = 3.0f; // Shield active time in seconds
+const float SHIELD_COOLDOWN = 5.0f; // Cooldown after shield deactivates
+
 // ============================ ASTEROID SIZE DEFINITIONS ============================
 enum AsteroidSize { SMALL, MEDIUM, LARGE };
 
@@ -78,6 +83,10 @@ bool isGameOver = false;
 bool isThrusting = false;
 float asteroidSpawnTimer = 0.0f;
 float currentSpawnRate = INITIAL_SPAWN_RATE;
+// --- SHIELD STATE ---
+bool shieldActive = false;
+float shieldTimer = 0.0f;
+float shieldCooldownTimer = 0.0f;
 
 // ============================ GLOBAL GRAPHICS HANDLES ============================
 unsigned int bulletVAO, bulletVBO;
@@ -86,6 +95,7 @@ unsigned int gradientVAO, gradientVBO;
 unsigned int shipFillVAO, shipFillVBO;
 unsigned int bresenhamShipVAO, bresenhamShipVBO;
 unsigned int gameOverTextVAO, gameOverTextVBO;
+unsigned int shieldVAO, shieldVBO;
 
 // ============================ GLOBAL SHADER PROGRAMS ============================
 unsigned int backgroundProgram;
@@ -93,6 +103,8 @@ unsigned int shaderProgram;
 
 // ============================ GLOBAL DATA BUFFERS ============================
 std::vector<float> bresenhamOutputBuffer;
+// --- SHIELD DATA BUFFER ---
+std::vector<float> shieldOutputBuffer;
 
 // ============================ STRUCTS ============================
 struct Asteroid {
@@ -124,6 +136,8 @@ void spawnNewAsteroid(glm::vec2 pos, AsteroidSize size);
 void splitAsteroid(const Asteroid& rock, size_t index);
 void drawBresenhamLine(int x0, int y0, int x1, int y1, std::vector<float>& vertexBuffer);
 void drawBresenhamShip(const Ship& player, unsigned int vbo, std::vector<float>& vertexBuffer);
+// --- MIDPOINT CIRCLE ALGORITHM PROTOTYPES ---
+void drawMidpointCircle(int cx, int cy, int radius, unsigned int vbo, std::vector<float>& vertexBuffer);
 
 // ============================ SHADERS ============================
 const char* vertexShaderSource = R"(
@@ -271,6 +285,65 @@ void drawBresenhamShip(const Ship& player, unsigned int vbo, std::vector<float>&
     drawBresenhamLine(pixelVertices[2], pixelVertices[3], pixelVertices[4], pixelVertices[5], vertexBuffer);
     drawBresenhamLine(pixelVertices[4], pixelVertices[5], pixelVertices[0], pixelVertices[1], vertexBuffer);
 
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertexBuffer.size() * sizeof(float)), vertexBuffer.data());
+}
+
+// ============================ MIDPOINT CIRCLE ALGORITHM ============================
+
+void drawCirclePoints(int cx, int cy, int x, int y, std::vector<float>& vertexBuffer) {
+    if (x == 0) {
+        // Points on the axes
+        vertexBuffer.push_back((float)cx / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy + y) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back((float)cx / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy - y) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx + y) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back((float)cy / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx - y) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back((float)cy / (SCR_HEIGHT / 2.0f) - 1.0f);
+    }
+    else if (x == y) {
+        // Points on the 45-degree lines
+        vertexBuffer.push_back(((float)cx + x) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy + y) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx - x) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy + y) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx + x) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy - y) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx - x) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy - y) / (SCR_HEIGHT / 2.0f) - 1.0f);
+    }
+    else if (x < y) {
+        // All eight octants
+        vertexBuffer.push_back(((float)cx + x) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy + y) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx - x) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy + y) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx + x) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy - y) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx - x) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy - y) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx + y) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy + x) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx - y) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy + x) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx + y) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy - x) / (SCR_HEIGHT / 2.0f) - 1.0f);
+        vertexBuffer.push_back(((float)cx - y) / (SCR_WIDTH / 2.0f) - 1.0f); vertexBuffer.push_back(((float)cy - x) / (SCR_HEIGHT / 2.0f) - 1.0f);
+    }
+}
+
+void drawMidpointCircle(int cx, int cy, int radius, unsigned int vbo, std::vector<float>& vertexBuffer) {
+    vertexBuffer.clear();
+
+    int x = 0;
+    int y = radius;
+    // The decision parameter P_k for midpoint circle algorithm
+    int p = 1 - radius; // P0 = 1 - r
+
+    drawCirclePoints(cx, cy, x, y, vertexBuffer);
+
+    while (x < y) {
+        x++;
+        if (p < 0) {
+            // Select E: P_k+1 = P_k + 2x_k+1 + 1
+            p = p + 2 * x + 1;
+        }
+        else {
+            // Select SE: P_k+1 = P_k + 2x_k+1 + 1 - 2y_k+1
+            y--;
+            p = p + 2 * (x - y) + 1;
+        }
+        drawCirclePoints(cx, cy, x, y, vertexBuffer);
+    }
+
+    // Update VBO with the new circle points
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertexBuffer.size() * sizeof(float)), vertexBuffer.data());
 }
@@ -469,10 +542,22 @@ void processInput(GLFWwindow* window)
         bullets.push_back(newBullet);
         bulletCooldown = FIRE_RATE;
     }
+    // --- SHIELD ACTIVATION ---
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS && !shieldActive && shieldCooldownTimer <= 0.0f) {
+        shieldActive = true;
+        shieldTimer = SHIELD_DURATION;
+        std::cout << "Shield Activated!" << std::endl;
+    }
 }
 
+// --- checkCollision with Shield ---
 bool checkCollision(glm::vec2 pos1, float rad1, glm::vec2 pos2, float rad2)
 {
+    // If pos1 is the ship, use the shield radius if active
+    if (pos1 == player.position && rad1 == player.radius && shieldActive) {
+        rad1 = SHIELD_RADIUS_FACTOR;
+    }
+
     glm::vec2 distanceVec = pos1 - pos2;
     float distanceSq = distanceVec.x * distanceVec.x + distanceVec.y * distanceVec.y;
     float radiiSumSq = (rad1 + rad2) * (rad1 + rad2);
@@ -609,6 +694,18 @@ int main()
     glEnableVertexAttribArray(0);
     glBindVertexArray(0);
 
+    // --- SHIELD SETUP (Dynamic Buffer for Circle Points) ---
+    // The maximum possible vertices in a circle drawn with the midpoint algorithm in the given screen size.
+    const size_t MAX_SHIELD_VERTICES = 8 * (SCR_WIDTH + SCR_HEIGHT) * sizeof(float);
+    glGenVertexArrays(1, &shieldVAO);
+    glGenBuffers(1, &shieldVBO);
+    glBindVertexArray(shieldVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, shieldVBO);
+    glBufferData(GL_ARRAY_BUFFER, MAX_SHIELD_VERTICES, NULL, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+
     // Get uniform locations once
     unsigned int transformLoc = glGetUniformLocation(shaderProgram, "transform");
     unsigned int colorLoc = glGetUniformLocation(shaderProgram, "lineColor");
@@ -622,6 +719,23 @@ int main()
         deltaTime = t - lastFrame;
         lastFrame = t;
         bulletCooldown -= deltaTime;
+
+        // --- SHIELD TIMER UPDATE ---
+        if (shieldActive) {
+            shieldTimer -= deltaTime;
+            if (shieldTimer <= 0.0f) {
+                shieldActive = false;
+                shieldCooldownTimer = SHIELD_COOLDOWN;
+                std::cout << "Shield Deactivated. Cooldown started." << std::endl;
+            }
+        }
+        if (shieldCooldownTimer > 0.0f) {
+            shieldCooldownTimer -= deltaTime;
+            if (shieldCooldownTimer <= 0.0f) {
+                std::cout << "Shield ready." << std::endl;
+            }
+        }
+        // ---------------------------------
 
         // --- Input Handling ---
         processInput(window);
@@ -670,14 +784,45 @@ int main()
                 }
             }
 
-            // Ship-Asteroid Collision Check
-            for (const auto& asteroid : asteroids) {
+            // Ship-Asteroid Collision Check (Robust Reverse Index Loop)
+            bool ship_hit = false;
+            for (size_t i = asteroids.size(); i > 0; --i) {
+                size_t index = i - 1;
+                const auto& asteroid = asteroids[index];
+
                 if (checkCollision(player.position, player.radius, asteroid.position, asteroid.radius)) {
-                    std::cout << "COLLISION! GAME OVER." << std::endl;
-                    isGameOver = true;
-                    break;
+
+                    if (shieldActive) {
+                        // 1. Destroy the asteroid (split if large, destroy if small)
+                        std::cout << "Shield absorbed collision and destroyed asteroid!" << std::endl;
+
+                        if (asteroid.size == SMALL) {
+                            glDeleteVertexArrays(1, &asteroid.VAO_Fill);
+                            glDeleteBuffers(1, &asteroid.VBO_Fill);
+                            asteroids.erase(asteroids.begin() + index);
+                        }
+                        else {
+                            splitAsteroid(asteroid, index);
+                        }
+
+                        // 2. Put the shield into cooldown mode
+                        shieldActive = false;
+                        shieldCooldownTimer = SHIELD_COOLDOWN;
+                        std::cout << "Shield deactivated. Cooldown started." << std::endl;
+
+                        // We continue to the next iteration as the current asteroid is gone, but the ship is safe.
+
+                    }
+                    else {
+                        // Regular collision - Game Over
+                        std::cout << "COLLISION! GAME OVER." << std::endl;
+                        isGameOver = true;
+                        ship_hit = true;
+                        break; // Stop checking collisions
+                    }
                 }
             }
+            if (ship_hit) break; // Exit the game physics update if game over
 
             // Bullet-Asteroid Collision Check (Handle splitting/destruction)
             for (size_t i = asteroids.size(); i > 0; --i) {
@@ -721,6 +866,28 @@ int main()
 
         // 2. Switch to the Main Game Object Shader
         glUseProgram(shaderProgram);
+
+        // --- Draw Shield (Midpoint Circle) ---
+        if (shieldActive && !isGameOver) {
+            // Calculate screen pixel coordinates for the center and radius
+            int cx = static_cast<int>((player.position.x + 1.0f) * (SCR_WIDTH / 2.0f));
+            int cy = static_cast<int>((player.position.y + 1.0f) * (SCR_HEIGHT / 2.0f));
+            int pixelRadius = static_cast<int>(SHIELD_RADIUS_FACTOR * (SCR_WIDTH / 2.0f));
+
+            // Draw the circle points and update the VBO
+            drawMidpointCircle(cx, cy, pixelRadius, shieldVBO, shieldOutputBuffer);
+
+            // Render the circle
+            glm::mat4 identityModel = glm::mat4(1.0f);
+            glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(identityModel));
+
+            // Use a color that fades out as the timer runs down
+            float fade = shieldTimer / SHIELD_DURATION;
+            glUniform3f(colorLoc, 0.0f, 0.8f * fade + 0.2f, 1.0f * fade + 0.2f); // Blue/Cyan
+            glPointSize(1.5f);
+            glBindVertexArray(shieldVAO);
+            glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(shieldOutputBuffer.size() / 2));
+        }
 
         // --- Drawing the Ship (Filled + Bresenham Outline) ---
         if (!isGameOver)
@@ -826,6 +993,9 @@ int main()
     glDeleteBuffers(1, &bresenhamShipVBO);
     glDeleteVertexArrays(1, &shipFillVAO);
     glDeleteBuffers(1, &shipFillVBO);
+    // --- SHIELD CLEANUP ---
+    glDeleteVertexArrays(1, &shieldVAO);
+    glDeleteBuffers(1, &shieldVBO);
 
     for (const auto& asteroid : asteroids) {
         glDeleteVertexArrays(1, &asteroid.VAO_Fill);
