@@ -62,7 +62,7 @@ struct Ship {
 Ship player;
 
 // ============================ PHYSICS CONSTANTS ============================
-const float THRUST_SPEED = 1.0f;
+const float THRUST_SPEED = 2.5f;
 const float ROTATION_SPEED = 2.0f;
 const float FRICTION = 0.995f;
 
